@@ -9,47 +9,63 @@ The Sumo Logic Distribution for OpenTelemetry Collector provides various receive
 
 You can find the full list of receivers on our [OpenTelemetry Collector GitHub page](https://github.com/SumoLogic/sumologic-otel-collector/tree/main#components).
 
+* [Filelog Receiver](#filelog-receiver)
+* [Windows Log Event Receiver](#windows-log-event-receiver)
+* [Syslog Receiver](#syslog-receiver)
+
+
 ## Filelog Receiver
 
-The Filelog Receiver tails and parses logs from files. The following is a basic configuration for the Filelog Receiver (collecting logs from a file), which you can place in the `conf.d` directory:
+The following configuration for the Filelog Receiver (collecting logs from a file), which you can place in the `conf.d` directory:
 
 ```yaml
 receivers:
-  filelog/custom_files:
-    include:
-    - /var/log/myservice/*.log
-    - /other/path/**/*.txt
-    - ./tmp/logs/*.log
-    include_file_name: false
-    include_file_path_resolved: true
+  filelog/custom_files:                                          ## Name of the receiver. You can add multiple file receivers as filelog/2 , filelog/3
+    include_file_path: true
+    include:                                          ## Path where files are stored. You can add multiple paths under 
+      - /var/log/syslog
+      - /var/log/audit/audit.log
 processors:
-  groupbyattrs/file path resolved:
-    keys:
-      - log.file.path_resolved
+  resource/processor1:
+    attributes:                                       ## This add otel/file_receiver value as _sourceCategory
+      - key: _sourceCategory
+        value: otel/file_receiver
+        action: insert
 service:
   pipelines:
-    logs/custom_files:
+    logs/pipeline1:
       receivers:
-      - filelog/custom_files
+        - filelog/1
       processors:
-      - memory_limiter
-      - groupbyattrs/file path resolved
-      - resourcedetection/system
-      - batch
+        - memory_limiter
+        - >-
+          resource/1
+        - batch
       exporters:
-      - sumologic
+        - sumologic
 ```
 
-`include:` lets the Filelog Receiver know where the log file is placed. Make sure that the collector has permissions to access the files; otherwise, it will not be collected.
 
-The `include_file_name: false` prevents the receiver from adding `log.file.name` attribute to the logs.
 
-Instead, we are using `include_file_path_resolved: true`, which adds a `log.file.path_resolved` attribute to the logs that contain the whole path of the file, as opposed to just the name of the file. The `log.file.path_resolved` attribute should be moved to resource and we use [Group by Attributes processor][groupbyattrprocessor] for that.
+* __receivers__: 
+  * `filelog/custom_files:` Name of the filelog receiver. You can add multiple file receivers as filelog/2 , filelog/3.
+  * `include:` lets the Filelog Receiver know where the log file is placed. Make sure that the collector has permissions to access the files; otherwise, it will not be collected.
+  * `include_file_path_resolved: true`, which adds a `log.file.path_resolved` attribute to the logs that contain the whole path of the file.
+ 
+* __processors__: 
+  * `resource/1` Name of the processor that uses `attributes` to add \_sourceCategory field with value `otel/file_receiver`
+ 
+* __exporters__: 
+  *  `sumologic` Sends data to registered Sumologic Organization.  Auto configured in sumologic.yaml during installation using script.
+ 
+* __pipelines__: 
+  *  `logs/pipeline1:`  Pipeline defination consists what data to collect, how to process the data and where to send logs. 
+
 
 The remaining processors in pipeline are from `sumologic.yaml` file and should be applied for better performance of collector and use of Sumo Logic platform.
 
 :::note
-The receiver (`filelog/custom_files`) and pipeline (`logs/custom_files:`) names should be unique across all configuration files to avoid conflicts and unexpected behavior.
+The receiver (`filelog/custom_files`) ,  (`resource/processor1`) and  pipeline (`logs/pipeline1:`) names should be unique across all configuration files to avoid conflicts and unexpected behavior.
 :::
 
 ### Keeping track of position in files
@@ -87,7 +103,63 @@ service:
 
 For more details, see the [Filelog Receiver documentation][filelogreceiver_readme].
 
-### Parsing JSON logs
+## Windows Log Event Receiver
+
+Windows Log Event Receiver tails and parses logs from windows event log API.
+
+Consider the following example usage of [Windows Event Log receiver][windowseventlogreceiver]. It is going to collect logs from application, security, and system channels and send them to Sumo Logic.
+
+```yaml
+receivers:
+  windowseventlog/application/localhost:
+    channel: Application
+  windowseventlog/security/localhost:
+    channel: Security
+  windowseventlog/system/localhost:
+    channel: System
+processors:
+  resource/windows_resource_attributes/localhost:
+    attributes:
+      - key: sumo.datasource
+        value: windows
+        action: insert
+service:
+  pipelines:
+    logs/windows/localhost:
+      receivers:
+        - windowseventlog/application/localhost
+        - windowseventlog/system/localhost
+        - windowseventlog/security/localhost
+      processors:
+        - memory_limiter
+        - resourcedetection/system
+        - resource/windows_resource_attributes/localhost
+        - batch
+      exporters:
+        - sumologic
+```
+
+## Syslog Receiver
+
+The OpenTelemetry Collector offers two approaches for Syslog processing:
+
+* Syslog Receiver
+* TCPlog/UDPlog Receiver and Sumo Logic Syslog Processor.
+
+The following table shows the comparison of source specific configurations between the Installed Collector and OpenTelemetry Collector.
+
+| Feature/Capability | OpenTelemetry Syslog Receiver | TCPlog/UDPlog Receiver and Sumo Logic Syslog Processor |
+|:--------------------|:----------------|:---------------------------------|
+| Accepts logs        | `RFC3164` and `RFC5424` formats | Any format |
+| Field Parsing       | Collector side | Not on collector side |
+| Protocol Verification | Strict parsing; logs sent to the wrong endpoint will not be parsed | No protocol verification; all formats are treated the same |
+| Recommendation      | Sending logs using a certain RFC protocol | Compatibility with the current Installed Collector behavior is needed |
+
+
+
+
+
+## Parsing JSON logs with File Receiver
 
 Filelog Receiver with [json_parser][json_parser] operator can be used for parsing JSON logs. The [json_parser][json_parser] operator parses the string-type field selected by `parse_from` as JSON (by default, `parse_from` is set to `$body` which indicates the whole log record).
 
@@ -139,41 +211,8 @@ service:
       - sumologic
 ```
 
-## Windows Log Event Receiver
 
-Windows Log Event Receiver tails and parses logs from windows event log API.
 
-Consider the following example usage of [Windows Event Log receiver][windowseventlogreceiver]. It is going to collect logs from application, security, and system channels and send them to Sumo Logic.
-
-```yaml
-receivers:
-  windowseventlog/application/localhost:
-    channel: Application
-  windowseventlog/security/localhost:
-    channel: Security
-  windowseventlog/system/localhost:
-    channel: System
-processors:
-  resource/windows_resource_attributes/localhost:
-    attributes:
-      - key: sumo.datasource
-        value: windows
-        action: insert
-service:
-  pipelines:
-    logs/windows/localhost:
-      receivers:
-        - windowseventlog/application/localhost
-        - windowseventlog/system/localhost
-        - windowseventlog/security/localhost
-      processors:
-        - memory_limiter
-        - resourcedetection/system
-        - resource/windows_resource_attributes/localhost
-        - batch
-      exporters:
-        - sumologic
-```
 
 :::tip Additional information
 * See [OpenTelemetry documentation][windowseventlogreceiver] for more information about Windows Event Log receiver.
